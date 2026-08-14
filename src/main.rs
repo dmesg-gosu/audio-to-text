@@ -57,8 +57,8 @@ async fn main() -> Result<()> {
     }
 
     // Single file mode
-    if let Some(input_file) = args.input {
-        process_single_file(&input_file, &args).await?;
+    if let Some(ref input_file) = args.input {
+        process_single_file(input_file, &args).await?;
     }
 
     Ok(())
