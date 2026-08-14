@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tracing::info;
@@ -69,7 +68,7 @@ async fn main() -> Result<()> {
     info!("Output file: {:?}", output_file_name);
     println!("\n⏱️  Starting transcription...\n");
 
-    // Build whisper command with json output for parsing
+    // Build whisper command with vtt output for parsing
     let mut cmd = Command::new("whisper");
     cmd.arg(input_file.to_str().unwrap())
         .arg("--model")
@@ -78,8 +77,8 @@ async fn main() -> Result<()> {
         .arg("vtt")
         .arg("--output_dir")
         .arg(output_dir.to_str().unwrap())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
     // Add diarization if requested
     if args.diarize {
@@ -91,32 +90,17 @@ async fn main() -> Result<()> {
         cmd.arg("--language").arg(lang);
     }
 
-    // Execute whisper with live output
-    let mut child = cmd.spawn()?;
-
-    // Capture stdout
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                if !line.is_empty() && !line.starts_with("WEBVTT") {
-                    println!("  {}", line);
-                }
-            }
-        }
-    }
-
-    // Wait for completion
-    let status = child.wait()?;
+    // Execute whisper
+    let status = cmd.status()?;
 
     if !status.success() {
         return Err(anyhow!("Whisper transcription failed"));
     }
 
-    // Read the generated VTT file to calculate pauses
+    // Read the generated VTT file to calculate statistics
     let mut vtt_path = input_file.file_stem().unwrap().to_os_string();
     vtt_path.push(".vtt");
-    let vtt_file = output_dir.join(vtt_path);
+    let vtt_file = output_dir.join(&vtt_path);
 
     if !vtt_file.exists() {
         return Err(anyhow!("VTT output file not created: {:?}", vtt_file));
@@ -129,10 +113,10 @@ async fn main() -> Result<()> {
     let stats = parse_vtt_and_calculate_stats(&vtt_file)?;
     print_statistics(&stats);
 
-    // Convert VTT to TXT if needed
+    // Convert VTT to TXT
     let txt_content = vtt_to_txt(&vtt_file)?;
 
-    // If custom output path specified, use it; otherwise use default
+    // Determine final output path
     let final_output = if has_custom_output {
         output_file_name.clone()
     } else {
@@ -140,6 +124,18 @@ async fn main() -> Result<()> {
         path.push(".txt");
         output_dir.join(path)
     };
+
+    // If custom output specified and different from default, move file
+    if has_custom_output {
+        let default_txt = {
+            let mut path = input_file.file_stem().unwrap().to_os_string();
+            path.push(".txt");
+            output_dir.join(path)
+        };
+        if default_txt != final_output && default_txt.exists() {
+            fs::rename(&default_txt, &final_output)?;
+        }
+    }
 
     fs::write(&final_output, txt_content)?;
 
@@ -155,44 +151,42 @@ struct VttStats {
     total_duration_seconds: f64,
     total_pause_seconds: f64,
     pause_count: usize,
-    phrases: Vec<Phrase>,
-}
-
-#[derive(Debug)]
-struct Phrase {
-    start: f64,
-    end: f64,
-    text: String,
+    pauses: Vec<(f64, f64)>, // (gap_start, gap_duration)
 }
 
 fn parse_vtt_and_calculate_stats(vtt_file: &PathBuf) -> Result<VttStats> {
     let content = fs::read_to_string(vtt_file)?;
-    let mut phrases = Vec::new();
+    let mut timestamps = Vec::new();
+    let mut pauses = Vec::new();
     let mut total_pause_seconds = 0.0;
-    let mut pause_count = 0;
 
-    for line in content.lines().skip(1) {
+    // Extract all timestamps
+    for line in content.lines() {
         if line.contains("-->") {
             let parts: Vec<&str> = line.split("-->").collect();
             if parts.len() == 2 {
                 let start = time_to_seconds(parts[0].trim());
                 let end = time_to_seconds(parts[1].trim());
-                phrases.push((start, end));
+                timestamps.push((start, end));
             }
         }
     }
 
-    // Calculate pauses
-    for i in 1..phrases.len() {
-        let pause = phrases[i].0 - phrases[i - 1].1;
-        if pause > 0.1 {
-            total_pause_seconds += pause;
-            pause_count += 1;
+    // Calculate pauses between timestamps
+    for i in 1..timestamps.len() {
+        let gap_start = timestamps[i - 1].1;
+        let gap_end = timestamps[i].0;
+        let gap_duration = gap_end - gap_start;
+
+        // Only count pauses longer than 0.5 seconds
+        if gap_duration > 0.5 {
+            total_pause_seconds += gap_duration;
+            pauses.push((gap_start, gap_duration));
         }
     }
 
-    let total_duration = if !phrases.is_empty() {
-        phrases[phrases.len() - 1].1
+    let total_duration = if !timestamps.is_empty() {
+        timestamps[timestamps.len() - 1].1
     } else {
         0.0
     };
@@ -200,8 +194,8 @@ fn parse_vtt_and_calculate_stats(vtt_file: &PathBuf) -> Result<VttStats> {
     Ok(VttStats {
         total_duration_seconds: total_duration,
         total_pause_seconds,
-        pause_count,
-        phrases: vec![],
+        pause_count: pauses.len(),
+        pauses,
     })
 }
 
@@ -218,6 +212,15 @@ fn time_to_seconds(time_str: &str) -> f64 {
     }
 }
 
+fn seconds_to_timestamp(seconds: f64) -> String {
+    let hours = (seconds / 3600.0).floor() as u32;
+    let minutes = ((seconds % 3600.0) / 60.0).floor() as u32;
+    let secs = (seconds % 60.0).floor() as u32;
+    let millis = ((seconds % 1.0) * 1000.0) as u32;
+
+    format!("{}:{}:{}.{:03}", hours, minutes, secs, millis)
+}
+
 fn print_statistics(stats: &VttStats) {
     let hours = (stats.total_duration_seconds / 3600.0).floor() as u32;
     let minutes = ((stats.total_duration_seconds % 3600.0) / 60.0).floor() as u32;
@@ -227,27 +230,89 @@ fn print_statistics(stats: &VttStats) {
     let pause_minutes = ((stats.total_pause_seconds % 3600.0) / 60.0).floor() as u32;
     let pause_seconds = (stats.total_pause_seconds % 60.0).floor() as u32;
 
+    let avg_pause = if stats.pause_count > 0 {
+        stats.total_pause_seconds / stats.pause_count as f64
+    } else {
+        0.0
+    };
+
+    let pause_ratio = if stats.total_duration_seconds > 0.0 {
+        (stats.total_pause_seconds / stats.total_duration_seconds) * 100.0
+    } else {
+        0.0
+    };
+
     println!("  Total duration:    {}h {}m {}s", hours, minutes, seconds);
-    println!("  Total pauses:      {}h {}m {}s", pause_hours, pause_minutes, pause_seconds);
+    println!("  Total pause time:  {}h {}m {}s", pause_hours, pause_minutes, pause_seconds);
     println!("  Number of pauses:  {}", stats.pause_count);
-    println!("  Avg pause length:  {:.2}s", stats.total_pause_seconds / (stats.pause_count as f64).max(1.0));
-    println!("  Pause ratio:       {:.1}%", (stats.total_pause_seconds / stats.total_duration_seconds * 100.0).max(0.0));
+    println!("  Avg pause length:  {:.2}s", avg_pause);
+    println!("  Pause ratio:       {:.1}%", pause_ratio);
+
+    if stats.pause_count > 0 && stats.pause_count <= 10 {
+        println!("\n  Pause timeline:");
+        for (i, (start, duration)) in stats.pauses.iter().enumerate() {
+            println!("    Pause {}: {} ({:.2}s)", i + 1, seconds_to_timestamp(*start), duration);
+        }
+    } else if stats.pause_count > 10 {
+        println!("\n  Top 10 longest pauses:");
+        let mut sorted_pauses = stats.pauses.clone();
+        sorted_pauses.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        for (i, (start, duration)) in sorted_pauses.iter().take(10).enumerate() {
+            println!("    Pause {}: {} ({:.2}s)", i + 1, seconds_to_timestamp(*start), duration);
+        }
+    }
 }
 
 fn vtt_to_txt(vtt_file: &PathBuf) -> Result<String> {
     let content = fs::read_to_string(vtt_file)?;
     let mut text = String::new();
-    let mut in_timestamp = false;
+    let mut current_timestamp = String::new();
 
     for line in content.lines() {
+        // Skip header
+        if line.starts_with("WEBVTT") || line.starts_with("NOTE") {
+            continue;
+        }
+
+        // Capture timestamps
         if line.contains("-->") {
-            in_timestamp = true;
-        } else if in_timestamp && !line.is_empty() && !line.starts_with("WEBVTT") {
+            let parts: Vec<&str> = line.split("-->").collect();
+            if parts.len() >= 1 {
+                let start_time = parts[0].trim();
+                // Convert HH:MM:SS.mmm to (M:SS) format
+                current_timestamp = format_timestamp(start_time);
+            }
+            continue;
+        }
+
+        // Skip empty lines
+        if line.is_empty() {
+            continue;
+        }
+
+        // Add text with timestamp
+        if !current_timestamp.is_empty() {
+            text.push_str(&current_timestamp);
+            text.push(' ');
             text.push_str(line);
             text.push('\n');
-            in_timestamp = false;
+            current_timestamp.clear();
         }
     }
 
-    Ok(text)
+    Ok(text.trim().to_string())
+}
+
+fn format_timestamp(time_str: &str) -> String {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() >= 3 {
+        let _hours = parts[0].parse::<u32>().unwrap_or(0);
+        let minutes = parts[1].parse::<u32>().unwrap_or(0);
+        let seconds_str = parts[2].replace(',', ".");
+        let seconds = seconds_str.parse::<u32>().unwrap_or(0);
+        
+        format!("({:02}:{:02})", minutes, seconds)
+    } else {
+        "(00:00)".to_string()
+    }
 }
