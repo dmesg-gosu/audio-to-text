@@ -18,8 +18,12 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Whisper model size: tiny, base, small, medium, large
-    #[arg(short, long, default_value = "base")]
+    #[arg(short, long, default_value = "medium")]
     model: String,
+
+    /// Enable post-processing with Mistral for text correction
+    #[arg(long)]
+    correct: bool,
 
     /// Language code (e.g., en, ru, fr). Auto-detect if not specified
     #[arg(short, long)]
@@ -116,6 +120,14 @@ async fn main() -> Result<()> {
     // Convert VTT to TXT
     let txt_content = vtt_to_txt(&vtt_file)?;
 
+    // Post-processing with Mistral if requested
+    let final_content = if args.correct {
+        println!("\n🔧 Post-processing with Mistral...");
+        correct_text_with_mistral(&txt_content).await?
+    } else {
+        txt_content
+    };
+
     // Determine final output path
     let final_output = if has_custom_output {
         output_file_name.clone()
@@ -137,7 +149,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    fs::write(&final_output, txt_content)?;
+    fs::write(&final_output, final_content)?;
 
     println!("\n✓ Transcription completed!");
     println!("  Output: {:?}", final_output);
