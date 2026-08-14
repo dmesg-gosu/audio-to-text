@@ -1,15 +1,13 @@
 use anyhow::{anyhow, Result};
-use base64::Engine;
 use clap::Parser;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::info;
 
 #[derive(Parser, Debug)]
 #[command(name = "audio-to-text")]
-#[command(about = "Convert MP3 audio to text using Ollama + Whisper", long_about = None)]
+#[command(about = "Convert MP3 audio to text using OpenAI Whisper", long_about = None)]
 struct Args {
     /// Input MP3 file path
     #[arg(short, long)]
@@ -19,25 +17,17 @@ struct Args {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Ollama API endpoint
-    #[arg(short, long, default_value = "http://localhost:11434")]
-    ollama: String,
-
-    /// Model to use for transcription
-    #[arg(short, long, default_value = "whisper")]
+    /// Whisper model size: tiny, base, small, medium, large
+    #[arg(short, long, default_value = "base")]
     model: String,
-}
 
-#[derive(Serialize, Debug)]
-struct TranscriptionRequest {
-    model: String,
-    prompt: String,
-    stream: bool,
-}
+    /// Output format: txt, vtt, srt, tsv, json, all
+    #[arg(short = 'f', long, default_value = "txt")]
+    format: String,
 
-#[derive(Deserialize, Debug)]
-struct TranscriptionResponse {
-    response: String,
+    /// Language code (e.g., en, ru, fr). Auto-detect if not specified
+    #[arg(short, long)]
+    language: Option<String>,
 }
 
 #[tokio::main]
@@ -47,68 +37,84 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    info!("Audio to text converter");
+    info!("Audio to text converter (OpenAI Whisper)");
     info!("Input file: {:?}", args.input);
-    info!("Ollama endpoint: {}", args.ollama);
     info!("Model: {}", args.model);
+    info!("Format: {}", args.format);
 
     // Validate input file exists
     if !args.input.exists() {
         return Err(anyhow!("Input file not found: {:?}", args.input));
     }
 
-    // Determine output path
-    let output_path = args.output.unwrap_or_else(|| {
-        let mut path = args.input.clone();
-        path.set_extension("txt");
-        path
-    });
+    // Determine output directory and filename
+    let input_file = args.input.canonicalize()?;
+    let output_dir = input_file
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot determine output directory"))?;
 
-    info!("Output file: {:?}", output_path);
-
-    // Read audio file
-    info!("Reading audio file...");
-    let audio_data = fs::read(&args.input)?;
-    info!("Audio file size: {} bytes", audio_data.len());
-
-    // Encode audio to base64
-    let encoded_audio = base64::engine::general_purpose::STANDARD.encode(&audio_data);
-
-    // Create transcription request
-    let request = TranscriptionRequest {
-        model: args.model.clone(),
-        prompt: encoded_audio,
-        stream: false,
+    let output_file_name = if let Some(output) = args.output {
+        output
+    } else {
+        let mut path = input_file.file_stem().unwrap().to_os_string();
+        path.push(".txt");
+        output_dir.join(path)
     };
 
-    // Send request to Ollama
-    info!("Sending request to Ollama...");
-    let client = Client::new();
-    let response = client
-        .post(&format!("{}/api/generate", args.ollama))
-        .json(&request)
-        .send()
-        .await?;
+    info!("Output file: {:?}", output_file_name);
+    info!("Starting transcription...");
 
-    if !response.status().is_success() {
+    // Build whisper command
+    let mut cmd = Command::new("whisper");
+    cmd.arg(input_file.to_str().unwrap())
+        .arg("--model")
+        .arg(&args.model)
+        .arg("--output_format")
+        .arg(&args.format)
+        .arg("--output_dir")
+        .arg(output_dir.to_str().unwrap());
+
+    // Add language if specified
+    if let Some(lang) = args.language {
+        cmd.arg("--language").arg(lang);
+    }
+
+    // Execute whisper
+    let output = cmd.output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow!(
-            "Ollama returned error: {} {}",
-            response.status(),
-            response.text().await?
+            "Whisper transcription failed:\n{}",
+            stderr
         ));
     }
 
-    // Parse response
-    let transcription: TranscriptionResponse = response.json().await?;
-    info!("Transcription received, saving to file...");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    info!("Transcription output:\n{}", stdout);
 
-    // Save to file
-    fs::write(&output_path, &transcription.response)?;
-    info!("Successfully saved transcription to: {:?}", output_path);
+    // Read the generated text file
+    let mut txt_path = input_file.file_stem().unwrap().to_os_string();
+    txt_path.push(".txt");
+    let txt_file = output_dir.join(txt_path);
+
+    if !txt_file.exists() {
+        return Err(anyhow!(
+            "Output file not created: {:?}",
+            txt_file
+        ));
+    }
+
+    // If custom output path specified, move the file
+    if args.output.is_some() && txt_file != output_file_name {
+        fs::rename(&txt_file, &output_file_name)?;
+    }
+
+    info!("Successfully saved transcription to: {:?}", output_file_name);
 
     println!("\n✓ Transcription completed!");
     println!("  Input:  {:?}", args.input);
-    println!("  Output: {:?}", output_path);
+    println!("  Output: {:?}", output_file_name);
 
     Ok(())
 }
