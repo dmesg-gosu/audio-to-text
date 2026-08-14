@@ -53,8 +53,9 @@ async fn main() -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("Cannot determine output directory"))?;
 
-    let output_file_name = if let Some(output) = args.output {
-        output
+    let has_custom_output = args.output.is_some();
+    let output_file_name = if let Some(output) = args.output.as_ref() {
+        output.clone()
     } else {
         let mut path = input_file.file_stem().unwrap().to_os_string();
         path.push(".txt");
@@ -75,7 +76,7 @@ async fn main() -> Result<()> {
         .arg(output_dir.to_str().unwrap());
 
     // Add language if specified
-    if let Some(lang) = args.language {
+    if let Some(lang) = &args.language {
         cmd.arg("--language").arg(lang);
     }
 
@@ -106,7 +107,7 @@ async fn main() -> Result<()> {
     }
 
     // If custom output path specified, move the file
-    if args.output.is_some() && txt_file != output_file_name {
+    if has_custom_output && txt_file != output_file_name {
         fs::rename(&txt_file, &output_file_name)?;
     }
 
