@@ -1,73 +1,57 @@
 # Audio to Text Converter
 
-Утилита командной строки для преобразования MP3 аудиофайлов в текст с использованием локальной модели Whisper через Ollama.
+Утилита командной строки для преобразования MP3 аудиофайлов в текст с использованием локальной модели Whisper и опциональной корректировкой через Mistral.
 
 ## Возможности
 
-- Преобразование MP3 в текст локально (без облака)
-- Использование модели Whisper через Ollama
-- Простой CLI интерфейс
-- Кроссплатформенность (Windows, macOS, Linux)
+- ✅ Преобразование MP3 в текст локально (без облака)
+- ✅ Использование модели Whisper (tiny, base, small, medium, large)
+- ✅ Временные метки `(MM:SS)` перед каждой строкой текста
+- ✅ Подсчет пауз между фразами с подробной статистикой
+- ✅ Post-processing через Mistral для корректировки ошибок
+- ✅ Live output транскрипции в реальном времени
+- ✅ Простой CLI интерфейс
+- ✅ Кроссплатформенность (Windows, macOS, Linux)
 
 ## Требования
 
-- [Ollama](https://ollama.ai) установлена и запущена
-- Модель Whisper загружена в Ollama
+- [OpenAI Whisper](https://github.com/openai/whisper) установлена локально
+- Для корректировки: [Ollama](https://ollama.ai) с моделью Mistral
 - Rust 1.70+ (если собираешь из исходников)
 
-## Установка Ollama
+## Установка
 
-### Windows и macOS
-
-1. Скачай установщик с [ollama.ai](https://ollama.ai)
-2. Установи приложение
-3. Ollama автоматически запустится и будет слушать на `http://localhost:11434`
-
-### Linux (Ubuntu/Debian)
+### 1. Установи OpenAI Whisper
 
 ```bash
-# Загрузи и установи Ollama
-curl -fsSL https://ollama.ai/install.sh | sh
+# Через pip
+pip install openai-whisper
 
-# Проверь установку
-ollama --version
-
-# Запусти Ollama (если не запустилась автоматически)
-ollama serve &
+# Или через pipx (рекомендуется)
+pipx install openai-whisper
 ```
 
-## Скачивание модели Whisper
+### 2. (Опционально) Установи Ollama с Mistral
 
-После установки Ollama скачай модель Whisper:
+Для корректировки текста через Mistral:
 
 ```bash
-ollama pull whisper
+# Установи Ollama с https://ollama.ai
+ollama pull mistral
+ollama serve
 ```
 
-Это займёт 5-10 минут в зависимости от скорости интернета. Модель будет сохранена локально (~3GB).
-
-## Установка программы
-
-### Способ 1: Загрузить готовый бинарник (проще)
-
-Скачай готовый `.exe` файл из [Releases](https://github.com/yourusername/audio-to-text/releases) и положи его в удобную папку.
-
-### Способ 2: Собрать из исходников
-
-#### Требования
-- [Rust](https://rustup.rs/) установлен
-
-#### Сборка
+### 3. Собери программу
 
 ```bash
 # Клонируй репозиторий
-git clone https://github.com/yourusername/audio-to-text.git
+git clone https://github.com/dmesg-gosu/audio-to-text.git
 cd audio-to-text
 
-# Собери программу
+# Собери
 cargo build --release
 
-# Бинарник будет в target/release/audio-to-text (или audio-to-text.exe на Windows)
+# Бинарник: target/release/audio-to-text
 ```
 
 ## Использование
@@ -78,28 +62,33 @@ cargo build --release
 audio-to-text --input audio.mp3
 ```
 
-Программа автоматически создаст файл `audio.txt` с результатом.
+Создаст файл `audio.txt` с временными метками и статистикой пауз.
 
-### С указанием пути для вывода
+### С корректировкой через Mistral
 
 ```bash
-audio-to-text --input audio.mp3 --output результат.txt
+audio-to-text --input audio.mp3 --correct
 ```
 
-### Если Ollama на другом адресе
+Дополнительно исправит ошибки, грамматику и английские слова в кириллице.
+
+### Выбрать модель Whisper
 
 ```bash
-audio-to-text --input audio.mp3 --ollama http://192.168.1.100:11434
-```
+# tiny (39MB, самая быстрая)
+audio-to-text --input audio.mp3 --model tiny
 
-### Со всеми параметрами
+# base (140MB, быстрая)
+audio-to-text --input audio.mp3 --model base
 
-```bash
-audio-to-text \
-  --input audio.mp3 \
-  --output результат.txt \
-  --ollama http://localhost:11434 \
-  --model whisper
+# small (440MB, хорошее качество)
+audio-to-text --input audio.mp3 --model small
+
+# medium (1.5GB, лучшее качество для русского) - рекомендуется
+audio-to-text --input audio.mp3 --model medium
+
+# large (2.9GB, максимальное качество, очень медленно)
+audio-to-text --input audio.mp3 --model large
 ```
 
 ## Параметры
@@ -108,40 +97,71 @@ audio-to-text \
 |----------|------------|----------------------|---------|
 | `--input` | `-i` | - | Путь к входному MP3 файлу (обязательный) |
 | `--output` | `-o` | input_name.txt | Путь к выходному TXT файлу |
-| `--ollama` | `-o` | http://localhost:11434 | URL Ollama API |
-| `--model` | `-m` | whisper | Модель для транскрипции |
+| `--model` | `-m` | medium | Модель Whisper: tiny, base, small, medium, large |
+| `--language` | `-l` | auto | Код языка (en, ru, fr и т.д.). Auto-detect если не указан |
+| `--correct` | - | false | Корректировать текст через Mistral |
 
 ## Примеры
 
 ```bash
-# Простая транскрипция
-audio-to-text -i доклад.mp3
+# Простая транскрипция на русском
+audio-to-text -i интервью.mp3 -l ru
 
-# С кастомным путем вывода
-audio-to-text -i meeting.mp3 -o meeting_notes.txt
+# С корректировкой
+audio-to-text -i встреча.mp3 --correct
 
-# Удаленный Ollama сервер
-audio-to-text -i audio.mp3 --ollama http://server.example.com:11434
+# Быстрая транскрипция (модель small)
+audio-to-text -i лекция.mp3 --model small
+
+# Все параметры
+audio-to-text \
+  --input podcast.mp3 \
+  --output результаты.txt \
+  --model medium \
+  --language ru \
+  --correct
 ```
 
-## Троблшутинг
+## Выходной формат
 
-### "connection refused"
-Убедись, что Ollama запущена:
-```bash
-ollama serve
+Программа создает TXT файл с временными метками:
+
+```
+(00:00) Так, тогда у нас как обычно проходит беседа. Сначала человек рассказывает о себе,
+(00:02) некую вводную часть, о том, какие у него там достижения были,
+(00:08) что он делал на предыдущем месте, соответственно, а потом мы ставим свои вопросики.
+(00:15) Давайте и это начнем так же.
 ```
 
-### "model not found: whisper"
-Скачай модель:
-```bash
-ollama pull whisper
+После транскрипции выводится статистика:
+
+```
+📊 Analysis
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Total duration:    0h 3m 17s
+  Total pause time:  0h 1m 20s
+  Number of pauses:  4
+  Avg pause length:  20.14s
+  Pause ratio:       40.9%
+
+  Pause timeline:
+    Pause 1: 00:04 (8.52s)
+    Pause 2: 00:21 (8.04s)
+    Pause 3: 00:55 (31.00s)
+    Pause 4: 02:41 (33.00s)
 ```
 
-### Медленная транскрипция
-- Это нормально для первого запуска (модель загружается в памяти)
-- Убедись, что достаточно RAM (~4GB минимум)
-- Проверь загруженность процессора
+## Производительность
+
+| Модель | Размер | Скорость | Качество |
+|--------|--------|----------|----------|
+| tiny | 39MB | ⚡⚡⚡ | ⭐ |
+| base | 140MB | ⚡⚡ | ⭐⭐ |
+| small | 440MB | ⚡ | ⭐⭐⭐ |
+| **medium** | 1.5GB | 🐢 | ⭐⭐⭐⭐ |
+| large | 2.9GB | 🐌 | ⭐⭐⭐⭐⭐ |
+
+**Рекомендация:** Используй `medium` для лучшего баланса качества и скорости на русском языке.
 
 ## Лицензия
 
