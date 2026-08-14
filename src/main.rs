@@ -200,119 +200,31 @@ fn parse_vtt_and_calculate_stats(vtt_file: &PathBuf) -> Result<VttStats> {
 }
 
 fn time_to_seconds(time_str: &str) -> f64 {
-    let parts: Vec<&str> = time_str.split(':').collect();
-    if parts.len() >= 3 {
+    let trimmed = time_str.trim();
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    
+    if parts.len() == 3 {
+        // Format: HH:MM:SS.mmm
         let hours = parts[0].parse::<f64>().unwrap_or(0.0);
         let minutes = parts[1].parse::<f64>().unwrap_or(0.0);
         let seconds_str = parts[2].replace(',', ".");
         let seconds = seconds_str.parse::<f64>().unwrap_or(0.0);
         hours * 3600.0 + minutes * 60.0 + seconds
+    } else if parts.len() == 2 {
+        // Format: MM:SS.mmm (Whisper VTT format)
+        let minutes = parts[0].parse::<f64>().unwrap_or(0.0);
+        let seconds_str = parts[1].replace(',', ".");
+        let seconds = seconds_str.parse::<f64>().unwrap_or(0.0);
+        minutes * 60.0 + seconds
     } else {
         0.0
     }
-}
-
-fn seconds_to_timestamp(seconds: f64) -> String {
-    let hours = (seconds / 3600.0).floor() as u32;
-    let minutes = ((seconds % 3600.0) / 60.0).floor() as u32;
-    let secs = (seconds % 60.0).floor() as u32;
-    let millis = ((seconds % 1.0) * 1000.0) as u32;
-
-    format!("{}:{}:{}.{:03}", hours, minutes, secs, millis)
-}
-
-fn print_statistics(stats: &VttStats) {
-    let hours = (stats.total_duration_seconds / 3600.0).floor() as u32;
-    let minutes = ((stats.total_duration_seconds % 3600.0) / 60.0).floor() as u32;
-    let seconds = (stats.total_duration_seconds % 60.0).floor() as u32;
-
-    let pause_hours = (stats.total_pause_seconds / 3600.0).floor() as u32;
-    let pause_minutes = ((stats.total_pause_seconds % 3600.0) / 60.0).floor() as u32;
-    let pause_seconds = (stats.total_pause_seconds % 60.0).floor() as u32;
-
-    let avg_pause = if stats.pause_count > 0 {
-        stats.total_pause_seconds / stats.pause_count as f64
-    } else {
-        0.0
-    };
-
-    let pause_ratio = if stats.total_duration_seconds > 0.0 {
-        (stats.total_pause_seconds / stats.total_duration_seconds) * 100.0
-    } else {
-        0.0
-    };
-
-    println!("  Total duration:    {}h {}m {}s", hours, minutes, seconds);
-    println!("  Total pause time:  {}h {}m {}s", pause_hours, pause_minutes, pause_seconds);
-    println!("  Number of pauses:  {}", stats.pause_count);
-    println!("  Avg pause length:  {:.2}s", avg_pause);
-    println!("  Pause ratio:       {:.1}%", pause_ratio);
-
-    if stats.pause_count > 0 && stats.pause_count <= 10 {
-        println!("\n  Pause timeline:");
-        for (i, (start, duration)) in stats.pauses.iter().enumerate() {
-            println!("    Pause {}: {} ({:.2}s)", i + 1, seconds_to_timestamp(*start), duration);
-        }
-    } else if stats.pause_count > 10 {
-        println!("\n  Top 10 longest pauses:");
-        let mut sorted_pauses = stats.pauses.clone();
-        sorted_pauses.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        for (i, (start, duration)) in sorted_pauses.iter().take(10).enumerate() {
-            println!("    Pause {}: {} ({:.2}s)", i + 1, seconds_to_timestamp(*start), duration);
-        }
-    }
-}
-
-fn vtt_to_txt(vtt_file: &PathBuf) -> Result<String> {
-    let content = fs::read_to_string(vtt_file)?;
-    let mut text = String::new();
-    let mut current_timestamp = String::new();
-
-    for line in content.lines() {
-        // Skip header
-        if line.starts_with("WEBVTT") || line.starts_with("NOTE") {
-            continue;
-        }
-
-        // Capture timestamps
-        if line.contains("-->") {
-            let parts: Vec<&str> = line.split("-->").collect();
-            if parts.len() >= 1 {
-                let start_time = parts[0].trim();
-                // Convert HH:MM:SS.mmm to (M:SS) format
-                current_timestamp = format_timestamp(start_time);
-            }
-            continue;
-        }
-
-        // Skip empty lines
-        if line.is_empty() {
-            continue;
-        }
-
-        // Add text with timestamp
-        if !current_timestamp.is_empty() {
-            text.push_str(&current_timestamp);
-            text.push(' ');
-            text.push_str(line);
-            text.push('\n');
-            current_timestamp.clear();
-        }
-    }
-
-    Ok(text.trim().to_string())
 }
 
 fn format_timestamp(time_str: &str) -> String {
-    let parts: Vec<&str> = time_str.split(':').collect();
-    if parts.len() >= 3 {
-        let _hours = parts[0].parse::<u32>().unwrap_or(0);
-        let minutes = parts[1].parse::<u32>().unwrap_or(0);
-        let seconds_str = parts[2].replace(',', ".");
-        let seconds = seconds_str.parse::<u32>().unwrap_or(0);
-        
-        format!("({:02}:{:02})", minutes, seconds)
-    } else {
-        "(00:00)".to_string()
-    }
+    let total_seconds = time_to_seconds(time_str);
+    let minutes = (total_seconds / 60.0).floor() as u32;
+    let seconds = (total_seconds % 60.0).floor() as u32;
+    
+    format!("({:02}:{:02})", minutes, seconds)
 }
