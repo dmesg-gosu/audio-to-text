@@ -56,13 +56,32 @@ cargo build --release
 
 ## Использование
 
-### Базовое использование
+### Базовое использование (один файл)
 
 ```bash
 audio-to-text --input audio.mp3
 ```
 
 Создаст файл `audio.txt` с временными метками и статистикой пауз.
+
+### Batch-режим (обработка папки)
+
+```bash
+# Обработить все MP3 файлы в папке
+audio-to-text --batch ./audio_files/
+
+# С корректировкой через Mistral
+audio-to-text --batch ./audio_files/ --correct
+
+# С выбором модели
+audio-to-text --batch ./audio_files/ --model medium --correct
+```
+
+Программа автоматически:
+- Найдет все MP3 файлы в папке
+- Обработает их по очереди
+- Создаст TXT файлы рядом с каждым MP3
+- Покажет прогресс (X из Y файлов)
 
 ### С корректировкой через Mistral
 
@@ -91,6 +110,19 @@ audio-to-text --input audio.mp3 --model medium
 audio-to-text --input audio.mp3 --model large
 ```
 
+### Указать язык
+
+```bash
+# Русский
+audio-to-text --input audio.mp3 --language ru
+
+# Английский
+audio-to-text --input audio.mp3 --language en
+
+# Французский
+audio-to-text --input audio.mp3 --language fr
+```
+
 ## Параметры
 
 | Параметр | Сокращение | Значение по умолчанию | Описание |
@@ -104,22 +136,25 @@ audio-to-text --input audio.mp3 --model large
 ## Примеры
 
 ```bash
-# Простая транскрипция на русском
-audio-to-text -i интервью.mp3 -l ru
+# Простая транскрипция одного файла
+audio-to-text -i интервью.mp3
 
-# С корректировкой
-audio-to-text -i встреча.mp3 --correct
+# Batch-обработка папки на ночь
+audio-to-text --batch ~/DevOps/audio/ --model medium --correct
 
-# Быстрая транскрипция (модель small)
-audio-to-text -i лекция.mp3 --model small
+# С выбором языка
+audio-to-text -i podcast.mp3 -l ru
 
-# Все параметры
+# Все параметры для одного файла
 audio-to-text \
-  --input podcast.mp3 \
+  --input meeting.mp3 \
   --output результаты.txt \
   --model medium \
   --language ru \
   --correct
+
+# Batch с большой моделью (лучшее качество, медленно)
+audio-to-text --batch ./audio_files/ --model large --correct
 ```
 
 ## Выходной формат

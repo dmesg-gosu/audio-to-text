@@ -11,7 +11,11 @@ use tracing::info;
 struct Args {
     /// Input MP3 file path
     #[arg(short, long)]
-    input: PathBuf,
+    input: Option<PathBuf>,
+
+    /// Batch mode: process all MP3 files in directory
+    #[arg(short, long)]
+    batch: Option<PathBuf>,
 
     /// Output text file path (optional, defaults to input_name.txt)
     #[arg(short, long)]
@@ -41,22 +45,91 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    println!("\n🎤 Audio to Text Converter (OpenAI Whisper)");
+    // Validate input
+    if args.input.is_none() && args.batch.is_none() {
+        return Err(anyhow!("Either --input or --batch must be specified"));
+    }
+
+    // Batch mode
+    if let Some(batch_dir) = &args.batch {
+        process_batch(batch_dir, &args).await?;
+        return Ok(());
+    }
+
+    // Single file mode
+    if let Some(input_file) = args.input {
+        process_single_file(&input_file, &args).await?;
+    }
+
+    Ok(())
+}
+
+async fn process_batch(dir: &PathBuf, args: &Args) -> Result<()> {
+    println!("\n📁 Batch Mode - Processing all MP3 files in: {:?}", dir);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    // Check if directory exists
+    if !dir.exists() {
+        return Err(anyhow!("Directory not found: {:?}", dir));
+    }
+
+    // Find all MP3 files
+    let mut mp3_files: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if ext_str == "mp3" {
+                    mp3_files.push(path);
+                }
+            }
+        }
+    }
+
+    if mp3_files.is_empty() {
+        println!("❌ No MP3 files found in {:?}", dir);
+        return Ok(());
+    }
+
+    println!("Found {} MP3 file(s):\n", mp3_files.len());
+    for (idx, file) in mp3_files.iter().enumerate() {
+        println!("  {}. {:?}", idx + 1, file.file_name().unwrap());
+    }
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    // Process each file
+    for (idx, file) in mp3_files.iter().enumerate() {
+        println!("\n⏳ Processing [{}/{}]: {:?}\n", idx + 1, mp3_files.len(), file.file_name().unwrap());
+        
+        if let Err(e) = process_single_file(file, args).await {
+            println!("❌ Error processing {:?}: {}\n", file.file_name().unwrap(), e);
+            continue;
+        }
+    }
+
+    println!("\n✅ Batch processing complete!");
+    Ok(())
+}
+
+async fn process_single_file(input_file: &PathBuf, args: &Args) -> Result<()> {
+    println!("🎤 Audio to Text Converter (OpenAI Whisper)");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    info!("Input file: {:?}", args.input);
+    info!("Input file: {:?}", input_file);
     info!("Model: {}", args.model);
     if args.diarize {
         info!("Speaker diarization: enabled");
     }
 
     // Validate input file exists
-    if !args.input.exists() {
-        return Err(anyhow!("Input file not found: {:?}", args.input));
+    if !input_file.exists() {
+        return Err(anyhow!("Input file not found: {:?}", input_file));
     }
 
     // Determine output directory and filename
-    let input_file = args.input.canonicalize()?;
-    let output_dir = input_file
+    let input_file_canonical = input_file.canonicalize()?;
+    let output_dir = input_file_canonical
         .parent()
         .ok_or_else(|| anyhow!("Cannot determine output directory"))?;
 
@@ -64,7 +137,7 @@ async fn main() -> Result<()> {
     let output_file_name = if let Some(output) = args.output.as_ref() {
         output.clone()
     } else {
-        let mut path = input_file.file_stem().unwrap().to_os_string();
+        let mut path = input_file_canonical.file_stem().unwrap().to_os_string();
         path.push(".txt");
         output_dir.join(path)
     };
@@ -74,7 +147,7 @@ async fn main() -> Result<()> {
 
     // Build whisper command with vtt output for parsing
     let mut cmd = Command::new("whisper");
-    cmd.arg(input_file.to_str().unwrap())
+    cmd.arg(input_file_canonical.to_str().unwrap())
         .arg("--model")
         .arg(&args.model)
         .arg("--output_format")
@@ -102,7 +175,7 @@ async fn main() -> Result<()> {
     }
 
     // Read the generated VTT file to calculate statistics
-    let mut vtt_path = input_file.file_stem().unwrap().to_os_string();
+    let mut vtt_path = input_file_canonical.file_stem().unwrap().to_os_string();
     vtt_path.push(".vtt");
     let vtt_file = output_dir.join(&vtt_path);
 
@@ -132,7 +205,7 @@ async fn main() -> Result<()> {
     let final_output = if has_custom_output {
         output_file_name.clone()
     } else {
-        let mut path = input_file.file_stem().unwrap().to_os_string();
+        let mut path = input_file_canonical.file_stem().unwrap().to_os_string();
         path.push(".txt");
         output_dir.join(path)
     };
@@ -140,7 +213,7 @@ async fn main() -> Result<()> {
     // If custom output specified and different from default, move file
     if has_custom_output {
         let default_txt = {
-            let mut path = input_file.file_stem().unwrap().to_os_string();
+            let mut path = input_file_canonical.file_stem().unwrap().to_os_string();
             path.push(".txt");
             output_dir.join(path)
         };
