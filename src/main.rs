@@ -329,3 +329,42 @@ fn vtt_to_txt(vtt_file: &PathBuf) -> Result<String> {
 
     Ok(text.trim().to_string())
 }
+
+async fn correct_text_with_mistral(text: &str) -> Result<String> {
+    let prompt = format!(
+        "Исправь следующий транскрибированный текст. Исправь опечатки, грамматику, \
+         верни английские слова которые написаны кириллицей обратно на английский. \
+         Сохрани временные метки в формате (MM:SS) перед каждой строкой. \
+         Верни только исправленный текст без объяснений:\n\n{}",
+        text
+    );
+
+    let request = serde_json::json!({
+        "model": "mistral",
+        "prompt": prompt,
+        "stream": false,
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://localhost:11434/api/generate")
+        .json(&request)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "Mistral API error: {}",
+            response.status()
+        ));
+    }
+
+    let body = response.json::<serde_json::Value>().await?;
+    let corrected = body
+        .get("response")
+        .and_then(|v| v.as_str())
+        .unwrap_or(text)
+        .to_string();
+
+    Ok(corrected)
+}
