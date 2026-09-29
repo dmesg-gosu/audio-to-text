@@ -197,11 +197,3 @@ audio-to-text --batch ./audio_files/ --model large --correct
 | large | 2.9GB | 🐌 | ⭐⭐⭐⭐⭐ |
 
 **Рекомендация:** Используй `medium` для лучшего баланса качества и скорости на русском языке.
-
-## Лицензия
-
-MIT
-
-## Автор
-
-[@gosu_ai](https://t.me/gosu_ai)
